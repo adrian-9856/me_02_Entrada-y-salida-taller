@@ -364,6 +364,7 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
   var totalGeneralHoras = 0;
   var totalGeneralPagar = 0;
   var totalRegistros = 0;
+  var totalDiasEstudioGeneral = 0;
 
   // Procesar cada empleado
   for (var emp = 0; emp < listaEmpleados.length; emp++) {
@@ -385,6 +386,7 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
 
     var totalHorasEmpleado = 0;
     var totalPagarEmpleado = 0;
+    var totalDiasEstudioEmpleado = 0;
 
     // Procesar filas del empleado - BUSCAR INGRESOS Y EGRESOS
     for (var i = 0; i < filasEmpleado.length; i++) {
@@ -442,10 +444,12 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
         var tipoFila = 'Normal';
         var porcentajeCalc = 100;
 
-        // Verificar si es día de estudio
+        // Verificar si es día de estudio — no se pagan horas, no cuenta como trabajo
         if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
           tipoFila = 'Día de Estudio';
           porcentajeCalc = 0;
+          horasTrabajadas = 0; // No trabajó, solo marcó entrada/salida
+          totalDiasEstudioEmpleado++;
         } else if (tieneTerapia) {
           tipoFila = 'Terapia';
           porcentajeCalc = 100;
@@ -542,10 +546,12 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
         var porcentajeCalc = 100;
         var tipoFila = 'Normal';
 
-        // Verificar si es día de estudio
+        // Verificar si es día de estudio — no se pagan horas, no cuenta como trabajo
         if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
           tipoFila = 'Día de Estudio';
           porcentajeCalc = 0;
+          horasTrabajadas = 0; // No trabajó, solo marcó entrada
+          totalDiasEstudioEmpleado++;
         }
 
         var horasPagar = horasTrabajadas * (porcentajeCalc / 100);
@@ -595,10 +601,20 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
     hoja.getRange(filaActual, 1).setFontWeight('bold').setHorizontalAlignment('right').setBackground('#e8e8e8');
     hoja.getRange(filaActual, 6).setValue(totalHorasEmpleado.toFixed(2)).setFontWeight('bold').setBackground('#e8e8e8').setHorizontalAlignment('center');
     hoja.getRange(filaActual, 8).setValue(totalPagarEmpleado.toFixed(2)).setFontWeight('bold').setBackground('#e8e8e8').setHorizontalAlignment('center');
-    filaActual += 2;
+    filaActual++;
+
+    if (totalDiasEstudioEmpleado > 0) {
+      hoja.getRange(filaActual, 1, 1, 5).merge();
+      hoja.getRange(filaActual, 1).setValue('📚 Días de estudio: ' + totalDiasEstudioEmpleado + ' (0 horas pagadas)');
+      hoja.getRange(filaActual, 1).setFontStyle('italic').setHorizontalAlignment('right').setBackground('#e1bee7').setFontSize(8);
+      filaActual++;
+    }
+
+    filaActual++;
 
     totalGeneralHoras += totalHorasEmpleado;
     totalGeneralPagar += totalPagarEmpleado;
+    totalDiasEstudioGeneral += totalDiasEstudioEmpleado;
   }
 
   // RESUMEN FINAL
@@ -612,6 +628,8 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
   hoja.getRange(filaActual, 2).setValue(listaEmpleados.length);
   hoja.getRange(filaActual, 3).setValue('Total Registros:').setFontWeight('bold');
   hoja.getRange(filaActual, 4).setValue(totalRegistros);
+  hoja.getRange(filaActual, 5).setValue('Días Estudio:').setFontWeight('bold');
+  hoja.getRange(filaActual, 6).setValue(totalDiasEstudioGeneral);
   filaActual++;
 
   hoja.getRange(filaActual, 1, 1, 2).merge().setValue('TOTAL HORAS LABORADAS:');
