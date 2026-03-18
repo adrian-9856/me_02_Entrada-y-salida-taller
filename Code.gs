@@ -18,10 +18,9 @@ function onOpen() {
     .addItem('🗓️ Reporte por Mes', 'generarReportePorMes')
     .addItem('📊 Reporte por Rango', 'generarReportePorRango')
     .addItem('📋 Reporte Completo', 'generarReporteTodo')
+    .addSeparator()
+    .addItem('⚙️ Configurar actualización automática', 'configurarActualizacionAutomatica')
     .addToUi();
-
-  // Actualizar automáticamente al abrir
-  importarCSVdesdeKobo();
 }
 
 // ==================== IMPORTACIÓN DESDE KOBO ====================
@@ -58,21 +57,34 @@ function importarCSVdesdeKobo() {
   }
 }
 
-// Configurar trigger automático cada hora
+// Configurar triggers automáticos (cada hora + al abrir)
 function configurarActualizacionAutomatica() {
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === 'importarCSVdesdeKobo') {
+    var handler = triggers[i].getHandlerFunction();
+    if (handler === 'importarCSVdesdeKobo' || handler === 'importarAlAbrir') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
 
+  // Trigger cada hora
   ScriptApp.newTrigger('importarCSVdesdeKobo')
     .timeBased()
     .everyHours(1)
     .create();
 
-  SpreadsheetApp.getUi().alert('✅ Actualización automática configurada cada hora');
+  // Trigger instalable al abrir (tiene permisos completos, a diferencia del onOpen simple)
+  ScriptApp.newTrigger('importarAlAbrir')
+    .forSpreadsheet(SpreadsheetApp.getActive())
+    .onOpen()
+    .create();
+
+  SpreadsheetApp.getUi().alert('✅ Actualización automática configurada:\n- Cada hora\n- Al abrir la hoja de cálculo');
+}
+
+// Función llamada por el trigger instalable onOpen (tiene permisos completos)
+function importarAlAbrir() {
+  importarCSVdesdeKobo();
 }
 
 // ==================== FUNCIONES DE REPORTES ====================
