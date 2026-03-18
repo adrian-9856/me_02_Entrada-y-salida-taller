@@ -166,6 +166,7 @@ function obtenerDiasEstudio() {
   if (!hoja) return mapa;
 
   var datos = hoja.getDataRange().getValues();
+  // Columnas: A=Participante, B-H=Lun-Dom, I=Fecha Inicio, J=Fecha Fin
   for (var f = 1; f < datos.length; f++) {
     var participante = String(datos[f][0] || '').trim();
     if (!participante) continue;
@@ -181,7 +182,24 @@ function obtenerDiasEstudio() {
     dias[6] = String(datos[f][6] || '').trim().toUpperCase() === 'X'; // Sábado
     dias[0] = String(datos[f][7] || '').trim().toUpperCase() === 'X'; // Domingo
 
-    mapa[participante] = dias;
+    // Fechas de vigencia (columnas I y J) — opcionales
+    var fechaInicio = datos[f][8] ? new Date(datos[f][8]) : null;
+    var fechaFin = datos[f][9] ? new Date(datos[f][9]) : null;
+
+    // Si hay fecha fin, ajustar al final del día
+    if (fechaFin) {
+      fechaFin.setHours(23, 59, 59, 999);
+    }
+    // Si hay fecha inicio, ajustar al inicio del día
+    if (fechaInicio) {
+      fechaInicio.setHours(0, 0, 0, 0);
+    }
+
+    mapa[participante] = {
+      dias: dias,
+      fechaInicio: fechaInicio,
+      fechaFin: fechaFin
+    };
   }
 
   return mapa;
@@ -190,8 +208,15 @@ function obtenerDiasEstudio() {
 // Verifica si una fecha es día de estudio para un participante
 function esDiaDeEstudio(participante, fecha, diasEstudioMapa) {
   if (!diasEstudioMapa[participante]) return false;
+
+  var config = diasEstudioMapa[participante];
+
+  // Verificar si la fecha está dentro del rango de vigencia
+  if (config.fechaInicio && fecha < config.fechaInicio) return false;
+  if (config.fechaFin && fecha > config.fechaFin) return false;
+
   var diaSemana = fecha.getDay(); // 0=Domingo, 1=Lunes, ...
-  return diasEstudioMapa[participante][diaSemana] === true;
+  return config.dias[diaSemana] === true;
 }
 
 // ==================== FUNCIONES DE REPORTES ====================
@@ -375,10 +400,19 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
     filaActual++;
     var textoEstudio = '';
     if (diasEstudioMapa[empleadoId]) {
+      var configEstudio = diasEstudioMapa[empleadoId];
       var diasTexto = [];
-      for (var d = 1; d <= 6; d++) { if (diasEstudioMapa[empleadoId][d]) diasTexto.push(DIAS_SEMANA[d]); }
-      if (diasEstudioMapa[empleadoId][0]) diasTexto.push(DIAS_SEMANA[0]);
-      if (diasTexto.length > 0) textoEstudio = ' (Estudia: ' + diasTexto.join(', ') + ')';
+      for (var d = 1; d <= 6; d++) { if (configEstudio.dias[d]) diasTexto.push(DIAS_SEMANA[d]); }
+      if (configEstudio.dias[0]) diasTexto.push(DIAS_SEMANA[0]);
+      if (diasTexto.length > 0) {
+        textoEstudio = ' (Estudia: ' + diasTexto.join(', ');
+        if (configEstudio.fechaInicio || configEstudio.fechaFin) {
+          var desde = configEstudio.fechaInicio ? Utilities.formatDate(configEstudio.fechaInicio, Session.getScriptTimeZone(), 'dd/MM/yyyy') : 'inicio';
+          var hasta = configEstudio.fechaFin ? Utilities.formatDate(configEstudio.fechaFin, Session.getScriptTimeZone(), 'dd/MM/yyyy') : 'indefinido';
+          textoEstudio += ' | Vigencia: ' + desde + ' - ' + hasta;
+        }
+        textoEstudio += ')';
+      }
     }
     hoja.getRange(filaActual, 1, 1, 8).merge().setValue('👤 ' + empleadoId.toUpperCase() + textoEstudio);
     hoja.getRange(filaActual, 1).setFontWeight('bold').setFontSize(11).setBackground('#e3f2fd').setHorizontalAlignment('left');
