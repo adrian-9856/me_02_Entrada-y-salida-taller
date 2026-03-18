@@ -7,6 +7,9 @@ var HORAS_JORNADA_NORMAL = 7; // Horas de trabajo por día
 // URL de tu exportación de KoboToolbox
 var URL_KOBO = "https://kf.kobotoolbox.org/api/v2/assets/agi395bJj6ojXJzPPDT9n6/export-settings/es4oUjEmPvovgLd6Y5yrQ4K/data.csv";
 
+// Nombres de los días en español (0=Domingo, 1=Lunes, ..., 6=Sábado)
+var DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
 // ==================== MENÚ Y TRIGGERS ====================
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
@@ -19,6 +22,7 @@ function onOpen() {
     .addItem('📊 Reporte por Rango', 'generarReportePorRango')
     .addItem('📋 Reporte Completo', 'generarReporteTodo')
     .addSeparator()
+    .addItem('📚 Configurar Días de Estudio', 'crearHojaDiasEstudio')
     .addItem('⚙️ Configurar actualización automática', 'configurarActualizacionAutomatica')
     .addToUi();
 }
@@ -85,6 +89,109 @@ function configurarActualizacionAutomatica() {
 // Función llamada por el trigger instalable onOpen (tiene permisos completos)
 function importarAlAbrir() {
   importarCSVdesdeKobo();
+}
+
+// ==================== DÍAS DE ESTUDIO ====================
+// Crea o abre la hoja "DiasEstudio" donde se configuran los días que cada participante estudia
+function crearHojaDiasEstudio() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = spreadsheet.getSheetByName("DiasEstudio");
+
+  if (!hoja) {
+    hoja = spreadsheet.insertSheet("DiasEstudio");
+
+    // Encabezados
+    var encabezados = ['Participante', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+    hoja.getRange(1, 1, 1, 8).setValues([encabezados]);
+    hoja.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#7b1fa2').setFontColor('#ffffff').setHorizontalAlignment('center');
+    hoja.setFrozenRows(1);
+
+    // Llenar con participantes existentes si hay datos de Kobo
+    var hojaKobo = spreadsheet.getSheetByName("DatosKobo");
+    if (hojaKobo) {
+      var datosKobo = hojaKobo.getDataRange().getValues();
+      var encabezadosKobo = datosKobo[0];
+      var colPart = -1;
+      for (var i = 0; i < encabezadosKobo.length; i++) {
+        if (String(encabezadosKobo[i]).trim() === 'Participante') { colPart = i; break; }
+      }
+      if (colPart !== -1) {
+        var participantes = {};
+        for (var f = 1; f < datosKobo.length; f++) {
+          var nombre = String(datosKobo[f][colPart] || '').trim();
+          if (nombre) participantes[nombre] = true;
+        }
+        var lista = Object.keys(participantes).sort();
+        for (var p = 0; p < lista.length; p++) {
+          hoja.getRange(p + 2, 1).setValue(lista[p]);
+        }
+      }
+    }
+
+    // Validación: solo permitir "X" o vacío en las columnas de días
+    var regla = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['X', ''], true)
+      .setAllowInvalid(false)
+      .setHelpText('Escribe X si ese día es de estudio, déjalo vacío si no')
+      .build();
+    hoja.getRange(2, 2, 50, 7).setDataValidation(regla);
+
+    // Ancho de columnas
+    hoja.setColumnWidth(1, 200);
+    for (var c = 2; c <= 8; c++) {
+      hoja.setColumnWidth(c, 100);
+    }
+
+    hoja.getRange(2, 2, 50, 7).setHorizontalAlignment('center');
+
+    SpreadsheetApp.getUi().alert(
+      '📚 HOJA DE DÍAS DE ESTUDIO CREADA\n\n' +
+      'Instrucciones:\n' +
+      '1. En la columna "Participante" escribe el nombre exacto como aparece en Kobo\n' +
+      '2. Marca con "X" los días que esa persona tiene clase/estudio\n' +
+      '3. Los días marcados aparecerán como "Día de Estudio" en el reporte con 0% de pago\n\n' +
+      'Ejemplo: Si "Juan" estudia los Martes y Jueves, pon X en esas columnas'
+    );
+  }
+
+  hoja.activate();
+}
+
+// Lee la hoja DiasEstudio y devuelve un mapa: { "participante": [0,1,0,1,0,0,0] } (Lun-Dom)
+function obtenerDiasEstudio() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = spreadsheet.getSheetByName("DiasEstudio");
+  var mapa = {};
+
+  if (!hoja) return mapa;
+
+  var datos = hoja.getDataRange().getValues();
+  for (var f = 1; f < datos.length; f++) {
+    var participante = String(datos[f][0] || '').trim();
+    if (!participante) continue;
+
+    // Columnas 1-7 corresponden a Lunes(1), Martes(2), Miércoles(3), Jueves(4), Viernes(5), Sábado(6), Domingo(0)
+    // Mapeamos a índice JS de día de semana: 0=Domingo, 1=Lunes, ..., 6=Sábado
+    var dias = {};
+    dias[1] = String(datos[f][1] || '').trim().toUpperCase() === 'X'; // Lunes
+    dias[2] = String(datos[f][2] || '').trim().toUpperCase() === 'X'; // Martes
+    dias[3] = String(datos[f][3] || '').trim().toUpperCase() === 'X'; // Miércoles
+    dias[4] = String(datos[f][4] || '').trim().toUpperCase() === 'X'; // Jueves
+    dias[5] = String(datos[f][5] || '').trim().toUpperCase() === 'X'; // Viernes
+    dias[6] = String(datos[f][6] || '').trim().toUpperCase() === 'X'; // Sábado
+    dias[0] = String(datos[f][7] || '').trim().toUpperCase() === 'X'; // Domingo
+
+    mapa[participante] = dias;
+  }
+
+  return mapa;
+}
+
+// Verifica si una fecha es día de estudio para un participante
+function esDiaDeEstudio(participante, fecha, diasEstudioMapa) {
+  if (!diasEstudioMapa[participante]) return false;
+  var diaSemana = fecha.getDay(); // 0=Domingo, 1=Lunes, ...
+  return diasEstudioMapa[participante][diaSemana] === true;
 }
 
 // ==================== FUNCIONES DE REPORTES ====================
@@ -215,19 +322,28 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
     return;
   }
 
+  // Cargar días de estudio
+  var diasEstudioMapa = obtenerDiasEstudio();
+
   // Crear hoja de reporte
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var periodo = obtenerTextoPeriodo(tipo, fechaInicio, fechaFin);
   var nombreHojaReporte = 'Reporte_' + new Date().getTime();
   var hoja = spreadsheet.insertSheet(nombreHojaReporte);
 
   // Encabezados del reporte
-  var encabezadosReporte = ['Fecha', 'Entrada', 'Salida', 'Tipo', 'Horas Trabajadas', 'Porcentaje', 'Horas a Pagar'];
-  hoja.getRange(1, 1, 1, 7).setValues([encabezadosReporte]);
-  hoja.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#1f54a8').setFontColor('#ffffff').setHorizontalAlignment('center');
+  var encabezadosReporte = ['Fecha', 'Día', 'Entrada', 'Salida', 'Tipo', 'Horas Trabajadas', 'Porcentaje', 'Horas a Pagar'];
+  hoja.getRange(1, 1, 1, 8).setValues([encabezadosReporte]);
+  hoja.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#1f54a8').setFontColor('#ffffff').setHorizontalAlignment('center');
   hoja.setFrozenRows(1);
 
   var ahora = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
   var filaActual = 2;
+
+  // Título del período
+  hoja.getRange(filaActual, 1, 1, 8).merge().setValue('Período: ' + periodo);
+  hoja.getRange(filaActual, 1).setFontWeight('bold').setFontSize(11).setHorizontalAlignment('center').setBackground('#e8eaf6');
+  filaActual++;
 
   // Agrupar datos por empleado
   var empleadosDatos = {};
@@ -256,7 +372,14 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
 
     // Encabezado del empleado
     filaActual++;
-    hoja.getRange(filaActual, 1, 1, 7).merge().setValue('👤 ' + empleadoId.toUpperCase());
+    var textoEstudio = '';
+    if (diasEstudioMapa[empleadoId]) {
+      var diasTexto = [];
+      for (var d = 1; d <= 6; d++) { if (diasEstudioMapa[empleadoId][d]) diasTexto.push(DIAS_SEMANA[d]); }
+      if (diasEstudioMapa[empleadoId][0]) diasTexto.push(DIAS_SEMANA[0]);
+      if (diasTexto.length > 0) textoEstudio = ' (Estudia: ' + diasTexto.join(', ') + ')';
+    }
+    hoja.getRange(filaActual, 1, 1, 8).merge().setValue('👤 ' + empleadoId.toUpperCase() + textoEstudio);
     hoja.getRange(filaActual, 1).setFontWeight('bold').setFontSize(11).setBackground('#e3f2fd').setHorizontalAlignment('left');
     filaActual++;
 
@@ -315,15 +438,14 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
         var enRango = validarEnRango(tipo, fechaStart, fechaInicio, fechaFin);
         if (!enRango) continue;
 
+        // Determinar tipo de registro
         var tipoFila = 'Normal';
         var porcentajeCalc = 100;
 
-        if (tieneIngreso) {
-          tipoFila = 'Ingreso';
-          porcentajeCalc = 100;
-        } else if (tieneEgreso) {
-          tipoFila = 'Egreso';
-          porcentajeCalc = 100;
+        // Verificar si es día de estudio
+        if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
+          tipoFila = 'Día de Estudio';
+          porcentajeCalc = 0;
         } else if (tieneTerapia) {
           tipoFila = 'Terapia';
           porcentajeCalc = 100;
@@ -350,9 +472,11 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
         textoHoraSalida += (horaSalidaNum < 12 ? ' AM' : ' PM');
 
         var fecha = textoFechaStart.split(' ')[0];
+        var diaSemanaTexto = DIAS_SEMANA[fechaStart.getDay()];
 
-        hoja.getRange(filaActual, 1, 1, 7).setValues([[
+        hoja.getRange(filaActual, 1, 1, 8).setValues([[
           fecha,
+          diaSemanaTexto,
           textoHoraEntrada,
           textoHoraSalida,
           tipoFila,
@@ -361,13 +485,15 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
           horasPagar.toFixed(2)
         ]]);
 
-        hoja.getRange(filaActual, 1, 1, 7).setFontSize(9).setHorizontalAlignment('center');
-        hoja.getRange(filaActual, 4).setHorizontalAlignment('left');
+        hoja.getRange(filaActual, 1, 1, 8).setFontSize(9).setHorizontalAlignment('center');
+        hoja.getRange(filaActual, 5).setHorizontalAlignment('left');
 
-        if (porcentajeCalc === 0) {
-          hoja.getRange(filaActual, 1, 1, 7).setBackground('#ffebee');
+        if (tipoFila === 'Día de Estudio') {
+          hoja.getRange(filaActual, 1, 1, 8).setBackground('#e1bee7'); // Morado claro
+        } else if (porcentajeCalc === 0) {
+          hoja.getRange(filaActual, 1, 1, 8).setBackground('#ffebee');
         } else if (porcentajeCalc === 50) {
-          hoja.getRange(filaActual, 1, 1, 7).setBackground('#fff9c4');
+          hoja.getRange(filaActual, 1, 1, 8).setBackground('#fff9c4');
         }
 
         totalHorasEmpleado += horasTrabajadas;
@@ -414,7 +540,15 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
 
         var horasTrabajadas = HORAS_JORNADA_NORMAL;
         var porcentajeCalc = 100;
-        var horasPagar = horasTrabajadas;
+        var tipoFila = 'Normal';
+
+        // Verificar si es día de estudio
+        if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
+          tipoFila = 'Día de Estudio';
+          porcentajeCalc = 0;
+        }
+
+        var horasPagar = horasTrabajadas * (porcentajeCalc / 100);
 
         var textoFechaStart = Utilities.formatDate(fechaStart, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
         var textoHoraEntrada = textoFechaStart.split(' ')[1] || '';
@@ -427,20 +561,26 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
         textoHoraSalida = textoHoraSalida.replace('*', '') + (horaSalidaNum < 12 ? ' AM' : ' PM') + '*';
 
         var fecha = textoFechaStart.split(' ')[0];
+        var diaSemanaTexto = DIAS_SEMANA[fechaStart.getDay()];
 
-        hoja.getRange(filaActual, 1, 1, 7).setValues([[
+        hoja.getRange(filaActual, 1, 1, 8).setValues([[
           fecha,
+          diaSemanaTexto,
           textoHoraEntrada,
           textoHoraSalida,
-          'Normal',
+          tipoFila,
           horasTrabajadas.toFixed(2),
-          '100%',
+          porcentajeCalc + '%',
           horasPagar.toFixed(2)
         ]]);
 
-        hoja.getRange(filaActual, 1, 1, 7).setBackground('#e8f5e9').setFontStyle('italic').setFontSize(9);
-        hoja.getRange(filaActual, 1, 1, 7).setHorizontalAlignment('center');
-        hoja.getRange(filaActual, 4).setHorizontalAlignment('left');
+        if (tipoFila === 'Día de Estudio') {
+          hoja.getRange(filaActual, 1, 1, 8).setBackground('#e1bee7').setFontStyle('italic').setFontSize(9);
+        } else {
+          hoja.getRange(filaActual, 1, 1, 8).setBackground('#e8f5e9').setFontStyle('italic').setFontSize(9);
+        }
+        hoja.getRange(filaActual, 1, 1, 8).setHorizontalAlignment('center');
+        hoja.getRange(filaActual, 5).setHorizontalAlignment('left');
 
         totalHorasEmpleado += horasTrabajadas;
         totalPagarEmpleado += horasPagar;
@@ -450,11 +590,11 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
     }
 
     // Subtotal empleado
-    hoja.getRange(filaActual, 1, 1, 4).merge();
+    hoja.getRange(filaActual, 1, 1, 5).merge();
     hoja.getRange(filaActual, 1).setValue('SUBTOTAL ' + empleadoId.toUpperCase());
     hoja.getRange(filaActual, 1).setFontWeight('bold').setHorizontalAlignment('right').setBackground('#e8e8e8');
-    hoja.getRange(filaActual, 5).setValue(totalHorasEmpleado.toFixed(2)).setFontWeight('bold').setBackground('#e8e8e8').setHorizontalAlignment('center');
-    hoja.getRange(filaActual, 7).setValue(totalPagarEmpleado.toFixed(2)).setFontWeight('bold').setBackground('#e8e8e8').setHorizontalAlignment('center');
+    hoja.getRange(filaActual, 6).setValue(totalHorasEmpleado.toFixed(2)).setFontWeight('bold').setBackground('#e8e8e8').setHorizontalAlignment('center');
+    hoja.getRange(filaActual, 8).setValue(totalPagarEmpleado.toFixed(2)).setFontWeight('bold').setBackground('#e8e8e8').setHorizontalAlignment('center');
     filaActual += 2;
 
     totalGeneralHoras += totalHorasEmpleado;
@@ -463,7 +603,7 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
 
   // RESUMEN FINAL
   filaActual++;
-  hoja.getRange(filaActual, 1, 1, 7).merge();
+  hoja.getRange(filaActual, 1, 1, 8).merge();
   hoja.getRange(filaActual, 1).setValue('RESUMEN GENERAL');
   hoja.getRange(filaActual, 1).setFontWeight('bold').setFontSize(12).setHorizontalAlignment('center');
   filaActual++;
@@ -485,34 +625,39 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
   filaActual += 2;
 
   // Leyenda
-  hoja.getRange(filaActual, 1, 1, 7).merge().setValue('* Salida estimada (se asumieron ' + HORAS_JORNADA_NORMAL + ' horas de trabajo)');
+  hoja.getRange(filaActual, 1, 1, 8).merge().setValue('* Salida estimada (se asumieron ' + HORAS_JORNADA_NORMAL + ' horas de trabajo)');
+  hoja.getRange(filaActual, 1).setFontSize(7).setFontStyle('italic').setFontColor('#666666');
+  filaActual++;
+
+  hoja.getRange(filaActual, 1, 1, 8).merge().setValue('📚 Morado = Día de Estudio (0% pago) | 🟡 Amarillo = Computación (50%) | 🔴 Rojo = Permiso (0%)');
   hoja.getRange(filaActual, 1).setFontSize(7).setFontStyle('italic').setFontColor('#666666');
   filaActual += 2;
 
   // NOTA IMPORTANTE
-  hoja.getRange(filaActual, 1, 1, 7).merge().setValue('⚠️ NOTA: Solo se cuentan como días válidos aquellos con entrada AM (antes de las 12:00). Las entradas PM se ignoran.');
+  hoja.getRange(filaActual, 1, 1, 8).merge().setValue('⚠️ NOTA: Solo se cuentan como días válidos aquellos con entrada AM (antes de las 12:00). Las entradas PM se ignoran.');
   hoja.getRange(filaActual, 1).setFontSize(8).setFontStyle('italic').setFontColor('#d32f2f').setBackground('#ffebee');
   filaActual += 2;
 
   // FIRMAS
-  hoja.getRange(filaActual, 1, 1, 3).merge().setValue('_________________').setHorizontalAlignment('center');
-  hoja.getRange(filaActual, 5, 1, 3).merge().setValue('_________________').setHorizontalAlignment('center');
+  hoja.getRange(filaActual, 1, 1, 4).merge().setValue('_________________').setHorizontalAlignment('center');
+  hoja.getRange(filaActual, 5, 1, 4).merge().setValue('_________________').setHorizontalAlignment('center');
   filaActual++;
-  hoja.getRange(filaActual, 1, 1, 3).merge().setValue('Elaborado por').setHorizontalAlignment('center').setFontSize(8).setFontWeight('bold');
-  hoja.getRange(filaActual, 5, 1, 3).merge().setValue('Vo.Bo. Recursos Humanos').setHorizontalAlignment('center').setFontSize(8).setFontWeight('bold');
+  hoja.getRange(filaActual, 1, 1, 4).merge().setValue('Elaborado por').setHorizontalAlignment('center').setFontSize(8).setFontWeight('bold');
+  hoja.getRange(filaActual, 5, 1, 4).merge().setValue('Vo.Bo. Recursos Humanos').setHorizontalAlignment('center').setFontSize(8).setFontWeight('bold');
   filaActual += 2;
 
-  hoja.getRange(filaActual, 1, 1, 7).merge().setValue('Documento generado el ' + ahora + ' • ' + NOMBRE_EMPRESA);
+  hoja.getRange(filaActual, 1, 1, 8).merge().setValue('Documento generado el ' + ahora + ' • ' + NOMBRE_EMPRESA);
   hoja.getRange(filaActual, 1).setFontSize(7).setFontStyle('italic').setFontColor('#666666').setHorizontalAlignment('center');
 
   // Ajustar columnas
   hoja.setColumnWidth(1, 90);
-  hoja.setColumnWidth(2, 130);
-  hoja.setColumnWidth(3, 130);
-  hoja.setColumnWidth(4, 120);
-  hoja.setColumnWidth(5, 100);
-  hoja.setColumnWidth(6, 80);
-  hoja.setColumnWidth(7, 100);
+  hoja.setColumnWidth(2, 90);
+  hoja.setColumnWidth(3, 100);
+  hoja.setColumnWidth(4, 100);
+  hoja.setColumnWidth(5, 120);
+  hoja.setColumnWidth(6, 100);
+  hoja.setColumnWidth(7, 80);
+  hoja.setColumnWidth(8, 100);
 
   hoja.activate();
 
