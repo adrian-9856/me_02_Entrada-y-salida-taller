@@ -34,6 +34,29 @@ function importarCSVdesdeKobo() {
     var csv = response.getContentText();
     var datos = Utilities.parseCsv(csv, ";");
 
+    if (datos.length === 0) return;
+
+    // Encontrar cuántas columnas válidas hay (encabezados no vacíos)
+    var encabezados = datos[0];
+    var ultimaColumnaValida = 0;
+    for (var c = 0; c < encabezados.length; c++) {
+      if (String(encabezados[c]).trim() !== '') {
+        ultimaColumnaValida = c + 1;
+      }
+    }
+
+    // Si no hay columnas válidas, no importar
+    if (ultimaColumnaValida === 0) {
+      SpreadsheetApp.getUi().alert('Error: El CSV no tiene encabezados válidos.');
+      return;
+    }
+
+    // Recortar todas las filas para solo incluir columnas con encabezado
+    var datosLimpios = [];
+    for (var f = 0; f < datos.length; f++) {
+      datosLimpios.push(datos[f].slice(0, ultimaColumnaValida));
+    }
+
     var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
     var hoja = spreadsheet.getSheetByName("DatosKobo");
 
@@ -43,19 +66,17 @@ function importarCSVdesdeKobo() {
 
     hoja.clearContents();
 
-    if (datos.length > 0) {
-      hoja.getRange(1, 1, datos.length, datos[0].length).setValues(datos);
+    hoja.getRange(1, 1, datosLimpios.length, datosLimpios[0].length).setValues(datosLimpios);
 
-      // Formatear encabezados
-      hoja.getRange(1, 1, 1, datos[0].length)
-        .setFontWeight('bold')
-        .setBackground('#4a86e8')
-        .setFontColor('#ffffff');
+    // Formatear encabezados
+    hoja.getRange(1, 1, 1, datosLimpios[0].length)
+      .setFontWeight('bold')
+      .setBackground('#4a86e8')
+      .setFontColor('#ffffff');
 
-      hoja.setFrozenRows(1);
+    hoja.setFrozenRows(1);
 
-      SpreadsheetApp.getActiveSpreadsheet().toast('✅ Datos actualizados desde KoboToolbox', 'Importación Exitosa', 3);
-    }
+    SpreadsheetApp.getActiveSpreadsheet().toast('✅ Datos actualizados (' + (datosLimpios.length - 1) + ' registros, ' + ultimaColumnaValida + ' columnas)', 'Importación Exitosa', 3);
   } catch (e) {
     SpreadsheetApp.getUi().alert('Error al importar datos: ' + e.message);
   }
@@ -101,9 +122,9 @@ function crearHojaDiasEstudio() {
     hoja = spreadsheet.insertSheet("DiasEstudio");
 
     // Encabezados
-    var encabezados = ['Participante', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-    hoja.getRange(1, 1, 1, 8).setValues([encabezados]);
-    hoja.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#7b1fa2').setFontColor('#ffffff').setHorizontalAlignment('center');
+    var encabezados = ['Participante', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo', 'Fecha Inicio', 'Fecha Fin'];
+    hoja.getRange(1, 1, 1, 10).setValues([encabezados]);
+    hoja.getRange(1, 1, 1, 10).setFontWeight('bold').setBackground('#7b1fa2').setFontColor('#ffffff').setHorizontalAlignment('center');
     hoja.setFrozenRows(1);
 
     // Llenar con participantes existentes si hay datos de Kobo
@@ -136,21 +157,28 @@ function crearHojaDiasEstudio() {
       .build();
     hoja.getRange(2, 2, 50, 7).setDataValidation(regla);
 
+    // Formato de fecha en columnas I y J
+    hoja.getRange(2, 9, 50, 2).setNumberFormat('dd/MM/yyyy');
+
     // Ancho de columnas
     hoja.setColumnWidth(1, 200);
     for (var c = 2; c <= 8; c++) {
       hoja.setColumnWidth(c, 100);
     }
+    hoja.setColumnWidth(9, 120);
+    hoja.setColumnWidth(10, 120);
 
     hoja.getRange(2, 2, 50, 7).setHorizontalAlignment('center');
 
     SpreadsheetApp.getUi().alert(
       '📚 HOJA DE DÍAS DE ESTUDIO CREADA\n\n' +
       'Instrucciones:\n' +
-      '1. En la columna "Participante" escribe el nombre exacto como aparece en Kobo\n' +
-      '2. Marca con "X" los días que esa persona tiene clase/estudio\n' +
-      '3. Los días marcados aparecerán como "Día de Estudio" en el reporte con 0% de pago\n\n' +
-      'Ejemplo: Si "Juan" estudia los Martes y Jueves, pon X en esas columnas'
+      '1. En "Participante" escribe el nombre exacto como aparece en Kobo\n' +
+      '2. Marca con "X" los días que esa persona tiene clase\n' +
+      '3. En "Fecha Inicio" pon cuándo empiezan las clases (ej: 01/01/2026)\n' +
+      '4. En "Fecha Fin" pon cuándo terminan las clases (ej: 30/11/2026)\n' +
+      '5. Si no pones fechas, aplica siempre\n\n' +
+      'Los días marcados = 0 horas trabajadas, 0 pago'
     );
   }
 
