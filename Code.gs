@@ -24,6 +24,9 @@ function onOpen() {
     .addSeparator()
     .addItem('📚 Configurar Días de Estudio', 'crearHojaDiasEstudio')
     .addItem('⚙️ Configurar actualización automática', 'configurarActualizacionAutomatica')
+    .addSeparator()
+    .addItem('🔧 Diagnosticar datos', 'diagnosticarDatos')
+    .addItem('🚀 INSTALAR TODO', 'instalarTodo')
     .addToUi();
 }
 
@@ -110,6 +113,107 @@ function configurarActualizacionAutomatica() {
 // Función llamada por el trigger instalable onOpen (tiene permisos completos)
 function importarAlAbrir() {
   importarCSVdesdeKobo();
+}
+
+// ==================== INSTALAR TODO ====================
+function instalarTodo() {
+  var ui = SpreadsheetApp.getUi();
+  var confirmar = ui.alert(
+    '🚀 INSTALAR TODO',
+    'Esto va a:\n' +
+    '1. Importar datos desde KoboToolbox\n' +
+    '2. Crear hoja DiasEstudio (si no existe)\n' +
+    '3. Configurar actualización automática\n\n' +
+    '¿Continuar?',
+    ui.ButtonSet.YES_NO
+  );
+
+  if (confirmar !== ui.Button.YES) return;
+
+  // Paso 1: Importar datos
+  importarCSVdesdeKobo();
+
+  // Paso 2: Crear DiasEstudio
+  crearHojaDiasEstudio();
+
+  // Paso 3: Configurar triggers
+  configurarActualizacionAutomatica();
+
+  ui.alert('🚀 INSTALACIÓN COMPLETA\n\nTodo está configurado. Ahora ejecuta "Diagnosticar datos" para verificar que todo funciona bien.');
+}
+
+// ==================== DIAGNÓSTICO ====================
+function diagnosticarDatos() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = spreadsheet.getSheetByName("DatosKobo");
+
+  if (!hoja) {
+    SpreadsheetApp.getUi().alert('No existe la hoja "DatosKobo". Primero importa los datos.');
+    return;
+  }
+
+  var datos = hoja.getDataRange().getValues();
+  var encabezados = datos[0];
+
+  // Mostrar todas las columnas encontradas
+  var infoColumnas = '=== COLUMNAS ENCONTRADAS ===\n';
+  for (var i = 0; i < encabezados.length; i++) {
+    infoColumnas += '[' + i + '] "' + String(encabezados[i]).trim() + '"\n';
+  }
+
+  // Buscar columnas clave
+  var colStart = -1, colEnd = -1, colPart = -1, colIE = -1;
+  for (var i = 0; i < encabezados.length; i++) {
+    var col = String(encabezados[i]).trim();
+    if (col === 'start') colStart = i;
+    if (col === 'end') colEnd = i;
+    if (col === 'Participante') colPart = i;
+    if (col === 'Ingreso / Egreso') colIE = i;
+    if (col.indexOf('Ingreso / Egreso/') === 0) colIE = -999; // formato viejo detectado
+  }
+
+  infoColumnas += '\n=== COLUMNAS CLAVE ===\n';
+  infoColumnas += 'start: ' + (colStart !== -1 ? 'columna ' + colStart : 'NO ENCONTRADA') + '\n';
+  infoColumnas += 'end: ' + (colEnd !== -1 ? 'columna ' + colEnd : 'NO ENCONTRADA') + '\n';
+  infoColumnas += 'Participante: ' + (colPart !== -1 ? 'columna ' + colPart : 'NO ENCONTRADA') + '\n';
+  infoColumnas += 'Ingreso / Egreso: ' + (colIE === -999 ? 'FORMATO VIEJO (columnas separadas)' : (colIE !== -1 ? 'columna ' + colIE : 'NO ENCONTRADA')) + '\n';
+
+  // Mostrar valores únicos de la columna Ingreso/Egreso y primeras filas
+  if (colIE > 0) {
+    var valoresUnicos = {};
+    var muestraFilas = '\n=== PRIMERAS 5 FILAS ===\n';
+    var limite = Math.min(datos.length, 6);
+    for (var f = 1; f < datos.length; f++) {
+      var val = String(datos[f][colIE] || '').trim();
+      if (val) valoresUnicos[val] = (valoresUnicos[val] || 0) + 1;
+      if (f < limite) {
+        muestraFilas += 'Fila ' + f + ': start="' + datos[f][colStart] + '" | end="' + datos[f][colEnd] + '" | Participante="' + datos[f][colPart] + '" | Ingreso/Egreso="' + datos[f][colIE] + '"\n';
+      }
+    }
+
+    infoColumnas += '\n=== VALORES EN "Ingreso / Egreso" ===\n';
+    var keys = Object.keys(valoresUnicos);
+    for (var v = 0; v < keys.length; v++) {
+      infoColumnas += '"' + keys[v] + '" → ' + valoresUnicos[keys[v]] + ' veces\n';
+    }
+    infoColumnas += muestraFilas;
+  }
+
+  infoColumnas += '\nTotal filas: ' + (datos.length - 1);
+
+  // Escribir resultado en una hoja temporal para que sea legible
+  var hojaDiag = spreadsheet.getSheetByName("Diagnóstico");
+  if (hojaDiag) spreadsheet.deleteSheet(hojaDiag);
+  hojaDiag = spreadsheet.insertSheet("Diagnóstico");
+
+  var lineas = infoColumnas.split('\n');
+  for (var l = 0; l < lineas.length; l++) {
+    hojaDiag.getRange(l + 1, 1).setValue(lineas[l]);
+  }
+  hojaDiag.setColumnWidth(1, 800);
+  hojaDiag.activate();
+
+  SpreadsheetApp.getUi().alert('🔧 DIAGNÓSTICO COMPLETO\n\nSe creó la hoja "Diagnóstico" con toda la información.\nPor favor comparte lo que dice esa hoja para que pueda ayudarte.');
 }
 
 // ==================== DÍAS DE ESTUDIO ====================
