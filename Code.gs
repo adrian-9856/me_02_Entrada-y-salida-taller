@@ -342,6 +342,9 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
   var colStart = -1;
   var colEnd = -1;
   var colParticipante = -1;
+  // Formato nuevo: una sola columna "Ingreso / Egreso" con el valor
+  var colIngresoEgreso = -1;
+  // Formato viejo: columnas separadas por cada opción
   var colIngreso = -1;
   var colEgreso = -1;
   var colTerapia = -1;
@@ -357,6 +360,8 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
       colEnd = i;
     } else if (nombreColumna === 'Participante') {
       colParticipante = i;
+    } else if (nombreColumna === 'Ingreso / Egreso') {
+      colIngresoEgreso = i;
     } else if (nombreColumna === 'Ingreso / Egreso/Ingreso') {
       colIngreso = i;
     } else if (nombreColumna === 'Ingreso / Egreso/Egreso') {
@@ -370,8 +375,16 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
     }
   }
 
+  // Determinar qué formato tiene el CSV
+  var formatoNuevo = (colIngresoEgreso !== -1);
+
   if (colStart === -1 || colParticipante === -1) {
     SpreadsheetApp.getUi().alert('ERROR\n\nNo se encontraron las columnas esperadas (start, Participante).');
+    return;
+  }
+
+  if (!formatoNuevo && colIngreso === -1 && colEgreso === -1) {
+    SpreadsheetApp.getUi().alert('ERROR\n\nNo se encontró la columna "Ingreso / Egreso".\nVerifica que el CSV de KoboToolbox tenga esa columna.');
     return;
   }
 
@@ -450,211 +463,205 @@ function generarReporte(tipo, fechaInicio, fechaFin) {
     var totalPagarEmpleado = 0;
     var totalDiasEstudioEmpleado = 0;
 
-    // Procesar filas del empleado - BUSCAR INGRESOS Y EGRESOS
+    // Leer el tipo de cada fila del empleado
+    var tiposFilas = [];
     for (var i = 0; i < filasEmpleado.length; i++) {
-      var fila = filasEmpleado[i];
-
-      var tieneIngreso = colIngreso !== -1 && datos[fila][colIngreso];
-      var tieneEgreso = colEgreso !== -1 && datos[fila][colEgreso];
-      var tieneTerapia = colTerapia !== -1 && datos[fila][colTerapia];
-      var tieneComputacion = colComputacion !== -1 && datos[fila][colComputacion];
-      var tienePermiso = colPermiso !== -1 && datos[fila][colPermiso];
-
-      // Si esta fila es un egreso, buscar su ingreso correspondiente
-      if (tieneEgreso && colEnd !== -1) {
-        var fechaEnd = new Date(datos[fila][colEnd]);
-
-        // Buscar el ingreso del mismo día
-        var ingresoCorrespondiente = null;
-        for (var j = 0; j < filasEmpleado.length; j++) {
-          var filaIngreso = filasEmpleado[j];
-          var esIngreso = colIngreso !== -1 && datos[filaIngreso][colIngreso];
-
-          if (esIngreso && colStart !== -1) {
-            var fechaStart = new Date(datos[filaIngreso][colStart]);
-
-            // Verificar que sea AM
-            var horaEntrada = fechaStart.getHours();
-            if (horaEntrada >= 12) {
-              // Es PM, ignorar
-              continue;
-            }
-
-            if (esMismaFecha(fechaStart, fechaEnd)) {
-              ingresoCorrespondiente = filaIngreso;
-              break;
-            }
-          }
-        }
-
-        if (!ingresoCorrespondiente) continue;
-
-        var fechaStart = new Date(datos[ingresoCorrespondiente][colStart]);
-        var horasTrabajadas = calcularHorasTrabajadas(fechaStart, fechaEnd);
-
-        // ===== REGLA: SOLO SI LA ENTRADA ES AM =====
-        var horaEntrada = fechaStart.getHours();
-        if (horaEntrada >= 12) {
-          continue; // Ignorar si es PM
-        }
-
-        // Validar rango
-        var enRango = validarEnRango(tipo, fechaStart, fechaInicio, fechaFin);
-        if (!enRango) continue;
-
-        // Determinar tipo de registro
-        var tipoFila = 'Normal';
-        var porcentajeCalc = 100;
-
-        // Verificar si es día de estudio — no se pagan horas, no cuenta como trabajo
-        if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
-          tipoFila = 'Día de Estudio';
-          porcentajeCalc = 0;
-          horasTrabajadas = 0; // No trabajó, solo marcó entrada/salida
-          totalDiasEstudioEmpleado++;
-        } else if (tieneTerapia) {
-          tipoFila = 'Terapia';
-          porcentajeCalc = 100;
-        } else if (tieneComputacion) {
-          tipoFila = 'Computación';
-          porcentajeCalc = 50;
-        } else if (tienePermiso) {
-          tipoFila = 'Permiso';
-          porcentajeCalc = 0;
-        }
-
-        var horasPagar = horasTrabajadas * (porcentajeCalc / 100);
-
-        var textoFechaStart = Utilities.formatDate(fechaStart, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
-        var textoFechaEnd = Utilities.formatDate(fechaEnd, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
-
-        var textoHoraEntrada = textoFechaStart.split(' ')[1] || '';
-        var textoHoraSalida = textoFechaEnd.split(' ')[1] || '';
-
-        var horaEntradaNum = parseInt(textoHoraEntrada.split(':')[0]);
-        var horaSalidaNum = parseInt(textoHoraSalida.split(':')[0]);
-
-        textoHoraEntrada += (horaEntradaNum < 12 ? ' AM' : ' PM');
-        textoHoraSalida += (horaSalidaNum < 12 ? ' AM' : ' PM');
-
-        var fecha = textoFechaStart.split(' ')[0];
-        var diaSemanaTexto = DIAS_SEMANA[fechaStart.getDay()];
-
-        hoja.getRange(filaActual, 1, 1, 8).setValues([[
-          fecha,
-          diaSemanaTexto,
-          textoHoraEntrada,
-          textoHoraSalida,
-          tipoFila,
-          horasTrabajadas.toFixed(2),
-          porcentajeCalc + '%',
-          horasPagar.toFixed(2)
-        ]]);
-
-        hoja.getRange(filaActual, 1, 1, 8).setFontSize(9).setHorizontalAlignment('center');
-        hoja.getRange(filaActual, 5).setHorizontalAlignment('left');
-
-        if (tipoFila === 'Día de Estudio') {
-          hoja.getRange(filaActual, 1, 1, 8).setBackground('#e1bee7'); // Morado claro
-        } else if (porcentajeCalc === 0) {
-          hoja.getRange(filaActual, 1, 1, 8).setBackground('#ffebee');
-        } else if (porcentajeCalc === 50) {
-          hoja.getRange(filaActual, 1, 1, 8).setBackground('#fff9c4');
-        }
-
-        totalHorasEmpleado += horasTrabajadas;
-        totalPagarEmpleado += horasPagar;
-        filaActual++;
-        totalRegistros++;
-      }
+      tiposFilas.push(obtenerTipoRegistro(datos, filasEmpleado[i], formatoNuevo, colIngresoEgreso, colIngreso, colEgreso, colTerapia, colComputacion, colPermiso));
     }
 
-    // Procesar ingresos sin egreso
+    // Procesar filas del empleado - BUSCAR EGRESOS Y EMPAREJAR CON INGRESOS
     for (var i = 0; i < filasEmpleado.length; i++) {
       var fila = filasEmpleado[i];
-      var tieneIngreso = colIngreso !== -1 && datos[fila][colIngreso];
+      var tipoRegistro = tiposFilas[i];
 
-      if (tieneIngreso && colStart !== -1) {
-        var fechaStart = new Date(datos[fila][colStart]);
+      if (tipoRegistro !== 'Egreso') continue;
+      if (colEnd === -1) continue;
 
-        // ===== REGLA: SOLO SI LA ENTRADA ES AM =====
-        var horaEntrada = fechaStart.getHours();
-        if (horaEntrada >= 12) {
-          continue; // Ignorar si es PM
+      var fechaEnd = new Date(datos[fila][colEnd]);
+
+      // Buscar el ingreso del mismo día
+      var ingresoCorrespondiente = null;
+      var tipoIngreso = '';
+      for (var j = 0; j < filasEmpleado.length; j++) {
+        if (tiposFilas[j] !== 'Ingreso') continue;
+        if (colStart === -1) continue;
+
+        var fechaStart = new Date(datos[filasEmpleado[j]][colStart]);
+
+        // Verificar que sea AM
+        if (fechaStart.getHours() >= 12) continue;
+
+        if (esMismaFecha(fechaStart, fechaEnd)) {
+          ingresoCorrespondiente = filasEmpleado[j];
+          break;
         }
+      }
 
-        // Verificar que no tenga egreso
-        var tieneEgreso = false;
-        for (var j = 0; j < filasEmpleado.length; j++) {
-          var filaEgreso = filasEmpleado[j];
-          var esEgreso = colEgreso !== -1 && datos[filaEgreso][colEgreso];
+      if (!ingresoCorrespondiente) continue;
 
-          if (esEgreso && colEnd !== -1) {
-            var fechaEnd = new Date(datos[filaEgreso][colEnd]);
-            if (esMismaFecha(fechaStart, fechaEnd)) {
-              tieneEgreso = true;
+      var fechaStart = new Date(datos[ingresoCorrespondiente][colStart]);
+      var horasTrabajadas = calcularHorasTrabajadas(fechaStart, fechaEnd);
+
+      // ===== REGLA: SOLO SI LA ENTRADA ES AM =====
+      if (fechaStart.getHours() >= 12) continue;
+
+      // Validar rango de fechas del reporte
+      if (!validarEnRango(tipo, fechaStart, fechaInicio, fechaFin)) continue;
+
+      // Determinar tipo y porcentaje
+      var tipoFila = 'Normal';
+      var porcentajeCalc = 100;
+
+      // Verificar si es día de estudio — no se pagan horas
+      if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
+        tipoFila = 'Día de Estudio';
+        porcentajeCalc = 0;
+        horasTrabajadas = 0;
+        totalDiasEstudioEmpleado++;
+      }
+      // Si no es día de estudio, verificar tipos especiales (Terapia, Computación, Permiso)
+      // Revisar tanto la fila de ingreso como la de egreso por si el tipo viene en alguna
+      if (tipoFila === 'Normal') {
+        var tipoIngresoFila = obtenerTipoRegistro(datos, ingresoCorrespondiente, formatoNuevo, colIngresoEgreso, colIngreso, colEgreso, colTerapia, colComputacion, colPermiso);
+        // Buscar si hay una fila de tipo especial para este empleado en el mismo día
+        for (var k = 0; k < filasEmpleado.length; k++) {
+          var tipoK = tiposFilas[k];
+          if (tipoK === 'Terapia' || tipoK === 'Computación' || tipoK === 'Permiso') {
+            var fechaK = new Date(datos[filasEmpleado[k]][colStart]);
+            if (esMismaFecha(fechaStart, fechaK)) {
+              if (tipoK === 'Terapia') { tipoFila = 'Terapia'; porcentajeCalc = 100; }
+              else if (tipoK === 'Computación') { tipoFila = 'Computación'; porcentajeCalc = 50; }
+              else if (tipoK === 'Permiso') { tipoFila = 'Permiso'; porcentajeCalc = 0; }
               break;
             }
           }
         }
-
-        if (tieneEgreso) continue; // Ya fue procesado arriba
-
-        // Validar rango
-        var enRango = validarEnRango(tipo, fechaStart, fechaInicio, fechaFin);
-        if (!enRango) continue;
-
-        var horasTrabajadas = HORAS_JORNADA_NORMAL;
-        var porcentajeCalc = 100;
-        var tipoFila = 'Normal';
-
-        // Verificar si es día de estudio — no se pagan horas, no cuenta como trabajo
-        if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
-          tipoFila = 'Día de Estudio';
-          porcentajeCalc = 0;
-          horasTrabajadas = 0; // No trabajó, solo marcó entrada
-          totalDiasEstudioEmpleado++;
-        }
-
-        var horasPagar = horasTrabajadas * (porcentajeCalc / 100);
-
-        var textoFechaStart = Utilities.formatDate(fechaStart, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
-        var textoHoraEntrada = textoFechaStart.split(' ')[1] || '';
-        var horaEntradaNum = parseInt(textoHoraEntrada.split(':')[0]);
-        textoHoraEntrada += (horaEntradaNum < 12 ? ' AM' : ' PM');
-
-        var salidaEstimada = new Date(fechaStart.getTime() + (HORAS_JORNADA_NORMAL * 60 * 60 * 1000));
-        var textoHoraSalida = Utilities.formatDate(salidaEstimada, Session.getScriptTimeZone(), 'HH:mm') + '*';
-        var horaSalidaNum = parseInt(textoHoraSalida.split(':')[0]);
-        textoHoraSalida = textoHoraSalida.replace('*', '') + (horaSalidaNum < 12 ? ' AM' : ' PM') + '*';
-
-        var fecha = textoFechaStart.split(' ')[0];
-        var diaSemanaTexto = DIAS_SEMANA[fechaStart.getDay()];
-
-        hoja.getRange(filaActual, 1, 1, 8).setValues([[
-          fecha,
-          diaSemanaTexto,
-          textoHoraEntrada,
-          textoHoraSalida,
-          tipoFila,
-          horasTrabajadas.toFixed(2),
-          porcentajeCalc + '%',
-          horasPagar.toFixed(2)
-        ]]);
-
-        if (tipoFila === 'Día de Estudio') {
-          hoja.getRange(filaActual, 1, 1, 8).setBackground('#e1bee7').setFontStyle('italic').setFontSize(9);
-        } else {
-          hoja.getRange(filaActual, 1, 1, 8).setBackground('#e8f5e9').setFontStyle('italic').setFontSize(9);
-        }
-        hoja.getRange(filaActual, 1, 1, 8).setHorizontalAlignment('center');
-        hoja.getRange(filaActual, 5).setHorizontalAlignment('left');
-
-        totalHorasEmpleado += horasTrabajadas;
-        totalPagarEmpleado += horasPagar;
-        filaActual++;
-        totalRegistros++;
       }
+
+      var horasPagar = horasTrabajadas * (porcentajeCalc / 100);
+
+      var textoFechaStart = Utilities.formatDate(fechaStart, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+      var textoFechaEnd = Utilities.formatDate(fechaEnd, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+
+      var textoHoraEntrada = textoFechaStart.split(' ')[1] || '';
+      var textoHoraSalida = textoFechaEnd.split(' ')[1] || '';
+
+      var horaEntradaNum = parseInt(textoHoraEntrada.split(':')[0]);
+      var horaSalidaNum = parseInt(textoHoraSalida.split(':')[0]);
+
+      textoHoraEntrada += (horaEntradaNum < 12 ? ' AM' : ' PM');
+      textoHoraSalida += (horaSalidaNum < 12 ? ' AM' : ' PM');
+
+      var fecha = textoFechaStart.split(' ')[0];
+      var diaSemanaTexto = DIAS_SEMANA[fechaStart.getDay()];
+
+      hoja.getRange(filaActual, 1, 1, 8).setValues([[
+        fecha,
+        diaSemanaTexto,
+        textoHoraEntrada,
+        textoHoraSalida,
+        tipoFila,
+        horasTrabajadas.toFixed(2),
+        porcentajeCalc + '%',
+        horasPagar.toFixed(2)
+      ]]);
+
+      hoja.getRange(filaActual, 1, 1, 8).setFontSize(9).setHorizontalAlignment('center');
+      hoja.getRange(filaActual, 5).setHorizontalAlignment('left');
+
+      if (tipoFila === 'Día de Estudio') {
+        hoja.getRange(filaActual, 1, 1, 8).setBackground('#e1bee7');
+      } else if (porcentajeCalc === 0) {
+        hoja.getRange(filaActual, 1, 1, 8).setBackground('#ffebee');
+      } else if (porcentajeCalc === 50) {
+        hoja.getRange(filaActual, 1, 1, 8).setBackground('#fff9c4');
+      }
+
+      totalHorasEmpleado += horasTrabajadas;
+      totalPagarEmpleado += horasPagar;
+      filaActual++;
+      totalRegistros++;
+    }
+
+    // Procesar ingresos sin egreso (solo entrada, sin salida ese día)
+    for (var i = 0; i < filasEmpleado.length; i++) {
+      var fila = filasEmpleado[i];
+      if (tiposFilas[i] !== 'Ingreso') continue;
+      if (colStart === -1) continue;
+
+      var fechaStart = new Date(datos[fila][colStart]);
+
+      // ===== REGLA: SOLO SI LA ENTRADA ES AM =====
+      if (fechaStart.getHours() >= 12) continue;
+
+      // Verificar que no tenga egreso ese día
+      var tieneEgresoEsteDia = false;
+      for (var j = 0; j < filasEmpleado.length; j++) {
+        if (tiposFilas[j] !== 'Egreso') continue;
+        if (colEnd === -1) continue;
+
+        var fechaEnd = new Date(datos[filasEmpleado[j]][colEnd]);
+        if (esMismaFecha(fechaStart, fechaEnd)) {
+          tieneEgresoEsteDia = true;
+          break;
+        }
+      }
+
+      if (tieneEgresoEsteDia) continue; // Ya fue procesado arriba
+
+      // Validar rango
+      if (!validarEnRango(tipo, fechaStart, fechaInicio, fechaFin)) continue;
+
+      var horasTrabajadas = HORAS_JORNADA_NORMAL;
+      var porcentajeCalc = 100;
+      var tipoFila = 'Normal';
+
+      // Verificar si es día de estudio
+      if (esDiaDeEstudio(empleadoId, fechaStart, diasEstudioMapa)) {
+        tipoFila = 'Día de Estudio';
+        porcentajeCalc = 0;
+        horasTrabajadas = 0;
+        totalDiasEstudioEmpleado++;
+      }
+
+      var horasPagar = horasTrabajadas * (porcentajeCalc / 100);
+
+      var textoFechaStart = Utilities.formatDate(fechaStart, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
+      var textoHoraEntrada = textoFechaStart.split(' ')[1] || '';
+      var horaEntradaNum = parseInt(textoHoraEntrada.split(':')[0]);
+      textoHoraEntrada += (horaEntradaNum < 12 ? ' AM' : ' PM');
+
+      var salidaEstimada = new Date(fechaStart.getTime() + (HORAS_JORNADA_NORMAL * 60 * 60 * 1000));
+      var textoHoraSalida = Utilities.formatDate(salidaEstimada, Session.getScriptTimeZone(), 'HH:mm');
+      var horaSalidaNum = parseInt(textoHoraSalida.split(':')[0]);
+      textoHoraSalida += (horaSalidaNum < 12 ? ' AM' : ' PM') + '*';
+
+      var fecha = textoFechaStart.split(' ')[0];
+      var diaSemanaTexto = DIAS_SEMANA[fechaStart.getDay()];
+
+      hoja.getRange(filaActual, 1, 1, 8).setValues([[
+        fecha,
+        diaSemanaTexto,
+        textoHoraEntrada,
+        textoHoraSalida,
+        tipoFila,
+        horasTrabajadas.toFixed(2),
+        porcentajeCalc + '%',
+        horasPagar.toFixed(2)
+      ]]);
+
+      if (tipoFila === 'Día de Estudio') {
+        hoja.getRange(filaActual, 1, 1, 8).setBackground('#e1bee7').setFontStyle('italic').setFontSize(9);
+      } else {
+        hoja.getRange(filaActual, 1, 1, 8).setBackground('#e8f5e9').setFontStyle('italic').setFontSize(9);
+      }
+      hoja.getRange(filaActual, 1, 1, 8).setHorizontalAlignment('center');
+      hoja.getRange(filaActual, 5).setHorizontalAlignment('left');
+
+      totalHorasEmpleado += horasTrabajadas;
+      totalPagarEmpleado += horasPagar;
+      filaActual++;
+      totalRegistros++;
     }
 
     // Subtotal empleado
@@ -790,6 +797,27 @@ function validarEnRango(tipo, fechaRegistro, fechaInicio, fechaFin) {
     return true;
   }
   return true;
+}
+
+// Lee el tipo de registro de una fila (compatible con formato nuevo y viejo del CSV)
+function obtenerTipoRegistro(datos, fila, formatoNuevo, colIngresoEgreso, colIngreso, colEgreso, colTerapia, colComputacion, colPermiso) {
+  if (formatoNuevo) {
+    var valor = String(datos[fila][colIngresoEgreso] || '').trim().toLowerCase();
+    if (valor.indexOf('ingreso') !== -1 && valor.indexOf('egreso') === -1) return 'Ingreso';
+    if (valor.indexOf('egreso') !== -1) return 'Egreso';
+    if (valor.indexOf('terapia') !== -1) return 'Terapia';
+    if (valor.indexOf('computaci') !== -1) return 'Computación';
+    if (valor.indexOf('permiso') !== -1) return 'Permiso';
+    return valor ? 'Otro' : '';
+  } else {
+    // Formato viejo: columnas separadas con valores booleanos
+    if (colIngreso !== -1 && datos[fila][colIngreso]) return 'Ingreso';
+    if (colEgreso !== -1 && datos[fila][colEgreso]) return 'Egreso';
+    if (colTerapia !== -1 && datos[fila][colTerapia]) return 'Terapia';
+    if (colComputacion !== -1 && datos[fila][colComputacion]) return 'Computación';
+    if (colPermiso !== -1 && datos[fila][colPermiso]) return 'Permiso';
+    return '';
+  }
 }
 
 function obtenerTextoPeriodo(tipo, fechaInicio, fechaFin) {
